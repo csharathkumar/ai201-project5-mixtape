@@ -1,5 +1,19 @@
 # Mixtape — Bug Hunt Submission
 
+## AI Usage
+
+I used Claude (via Cowork) as a pair-debugging partner across all four milestones, with a consistent loop: read the code myself or have Claude read it and explain what it found, form a hypothesis, then verify that hypothesis by actually running something (pytest, curl against the live server, or a direct sqlite query) rather than trusting the explanation on its own.
+
+**Milestone 1 (orientation).** Had Claude read through `app.py`, `models.py`, every file in `routes/` and `services/`, and summarize each one's responsibility, then trace two data flows end-to-end (rate a song → notification service; view a playlist → playlist service). This was faster than manually following every import, but it was only trustworthy because the summaries were checked against the actual file contents in the same pass, not taken as given.
+
+**Milestone 2 (reproduction).** Claude formed hypotheses about each bug from reading the code before I'd looked closely myself — e.g., spotting the `today.weekday() != 6` clause in `streak_service.py` and the `songs[:-1]` slice in `playlist_service.py`. I verified every one of these by actually reproducing the bug: curl against the live server for the notification and playlist bugs, pytest for the streak bug (since I can't control "now" through the API).
+
+This is also where I caught a case where Claude's first guess was wrong. It expected Issue #3 (search duplicates) to reproduce with a simple curl call, based on `search_service.py`'s `outerjoin` without `.distinct()`. It didn't reproduce — a real curl call against "Crown Heights Anthem" (3 tags) returned exactly 1 result, not 3, and the existing `test_search.py` suite passed in full. Claude's read of the code wasn't wrong (there genuinely is no explicit dedup), but its prediction of the *observable* behavior was incomplete: it hadn't accounted for SQLAlchemy 2.0's ORM layer automatically deduplicating identical-primary-key rows from a joined query. I had it look up that version-specific behavior and confirm it against the actual installed versions (`pip show sqlalchemy flask-sqlalchemy`) before accepting that Issue #3 genuinely wasn't reproducible here, which is what led to swapping in Issue #1 instead of spending more time on a bug that isn't observable in this environment.
+
+**Milestone 3 (fix + RCA).** For each bug, Claude proposed the smallest targeted fix and drafted the root cause write-up, but I only accepted a fix after seeing it pass the test suite and behave correctly against real requests I ran myself (the notification count and playlist song count changing exactly as expected, with the right IDs and content). I also caught a second incorrect assumption here: after applying the fixes, Claude's first "verification" curl commands still showed the old buggy behavior, and it initially treated that as confirmed but it turned out `flask run` without `--debug` doesn't auto-reload code changes, so the live server was still running the pre-fix module. Once I pointed out the mismatch between the (correct) pytest results and the (stale) curl results, Claude caught its own assumption, had me restart the server, and the live results then matched.
+
+**Where I made the calls myself.** Deciding to leave the playlist-add `IntegrityError` crash (a real bug I found by accident while reproducing Issue #5, but not one of the five tracked issues) unfixed was a scoping decision I made rather than something Claude pushed either way. I also didn't let Claude touch git directly after a `.git/index.lock` conflict came up more than once in its sandboxed environment — from that point on I ran every `git add`/`commit`/`push` myself, which also meant I did the final review of the actual diff and commit history rather than trusting a description of it.
+
 ## Milestone 1: Codebase Map
 
 ### Setup
